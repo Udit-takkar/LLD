@@ -335,6 +335,7 @@ class Member extends Account {
   private dateOfMembership: Date;
   private totalBooksCheckedout: number = 0;
   public fineBalance: number = 0;
+  private static readonly MAX_BOOKS_ALLOWED: number = 5;
 
   constructor(
     id: string,
@@ -347,8 +348,47 @@ class Member extends Account {
     this.dateOfMembership = dateOfMembership;
   }
 
+  issueBook(bookItem: BookItem): boolean {
+    if (this.status !== AccountStatus.Active) {
+      throw new Error("Member account is not active");
+    }
+
+    if (this.fineBalance > 0) {
+      throw new Error("Cannot issue book. Please clear pending fines");
+    }
+
+    if (this.totalBooksCheckedout >= Member.MAX_BOOKS_ALLOWED) {
+      throw new Error("Cannot issue more books. Maximum limit reached");
+    }
+
+    if (bookItem.checkout(this)) {
+      this.totalBooksCheckedout++;
+      return true;
+    }
+    return false;
+  }
+
+  returnBook(bookItem: BookItem): boolean {
+    if (bookItem.returnBook()) {
+      this.totalBooksCheckedout--;
+      return true;
+    }
+    return false;
+  }
+
+  reserveBook(bookItem: BookItem): boolean {
+    if (bookItem.reserve(this)) {
+      return true;
+    }
+    return false;
+  }
+
   getTotalCheckedoutBooks(): number {
     return this.totalBooksCheckedout;
+  }
+
+  getFines(): Fine[] {
+    return this.library.getFineManagement().getMemberFines(this.id);
   }
 
   addFine(amount: number): void {
@@ -368,14 +408,6 @@ class Member extends Account {
       paymentMethod,
       paymentDetails
     );
-  }
-
-  getFines(): Fine[] {
-    return this.library.getFineManagement().getMemberFines(this.id);
-  }
-
-  getUnpaidFines(): Fine[] {
-    return this.library.getFineManagement().getUnpaidFines(this.id);
   }
 }
 
