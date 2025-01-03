@@ -200,26 +200,152 @@ class Player {
 }
 
 class Team {
-  private currentPlaying11: Set<Player> = new Set();
-
   constructor(
     private name: string,
-    private squad: Player[],
+    private players: Player[],
     private captain: Player,
-    private viceCaptain: Player
+    private viceCaptain: Player,
+    private coach: string = "",
+    private homeGround: Stadium | null = null
   ) {}
 
-  public setPlaying11(players: Player[]): boolean {
-    if (players.length !== 11) return false;
-    if (!players.every((p) => this.squad.includes(p))) return false;
+  public getName(): string {
+    return this.name;
+  }
 
-    this.currentPlaying11.clear();
-    players.forEach((p) => this.currentPlaying11.add(p));
+  public getPlayers(): Player[] {
+    return [...this.players]; // Return a copy to maintain encapsulation
+  }
+
+  public getCaptain(): Player {
+    return this.captain;
+  }
+
+  public getViceCaptain(): Player {
+    return this.viceCaptain;
+  }
+
+  public getCoach(): string {
+    return this.coach;
+  }
+
+  public getHomeGround(): Stadium | null {
+    return this.homeGround;
+  }
+
+  public addPlayer(player: Player): boolean {
+    if (this.players.includes(player)) {
+      return false;
+    }
+    this.players.push(player);
     return true;
   }
 
-  public isInPlaying11(player: Player): boolean {
-    return this.currentPlaying11.has(player);
+  public removePlayer(player: Player): boolean {
+    const index = this.players.indexOf(player);
+    if (index === -1) {
+      return false;
+    }
+    this.players.splice(index, 1);
+    return true;
+  }
+
+  public setCoach(coach: string): void {
+    this.coach = coach;
+  }
+
+  public setHomeGround(stadium: Stadium): void {
+    this.homeGround = stadium;
+  }
+
+  public setCaptain(player: Player): boolean {
+    if (!this.players.includes(player)) {
+      return false;
+    }
+    this.captain = player;
+    return true;
+  }
+
+  public setViceCaptain(player: Player): boolean {
+    if (!this.players.includes(player)) {
+      return false;
+    }
+    this.viceCaptain = player;
+    return true;
+  }
+
+  public getPlayingEleven(): Player[] | null {
+    // This would be set before each match
+    // Implementation depends on your specific requirements
+    return null;
+  }
+
+  public setPlayingEleven(players: Player[]): boolean {
+    if (players.length !== 11) {
+      return false;
+    }
+
+    // Verify all players are part of the team
+    if (!players.every((player) => this.players.includes(player))) {
+      return false;
+    }
+
+    // Additional validation could be added here
+    // For example, ensuring at least one wicket keeper, etc.
+
+    return true;
+  }
+
+  public getTournamentSquad(tournament: Tournament): Player[] {
+    // This would return the squad registered for a specific tournament
+    // Implementation depends on your specific requirements
+    return [];
+  }
+
+  public registerTournamentSquad(
+    tournament: Tournament,
+    squad: Player[]
+  ): boolean {
+    // Validate and register squad for tournament
+    // Implementation depends on your specific requirements
+    if (!squad.every((player) => this.players.includes(player))) {
+      return false;
+    }
+    return true;
+  }
+
+  public getStats(): TeamStats {
+    // Return team statistics
+    // Implementation depends on your specific requirements
+    return new TeamStats();
+  }
+}
+
+// Add TeamStats class for team statistics
+class TeamStats {
+  constructor(
+    public matchesPlayed: number = 0,
+    public matchesWon: number = 0,
+    public matchesLost: number = 0,
+    public matchesDrawn: number = 0,
+    public totalRuns: number = 0,
+    public totalWickets: number = 0
+  ) {}
+
+  public getWinPercentage(): number {
+    if (this.matchesPlayed === 0) return 0;
+    return (this.matchesWon / this.matchesPlayed) * 100;
+  }
+
+  public updateStats(match: Match, isWinner: boolean): void {
+    this.matchesPlayed++;
+    if (isWinner) {
+      this.matchesWon++;
+    } else if (match.getState() === MatchState.COMPLETED) {
+      this.matchesLost++;
+    } else {
+      this.matchesDrawn++;
+    }
   }
 }
 
@@ -286,10 +412,13 @@ class StatsManager implements IStatsManager {
   }
 }
 
+// Abstract Match class
 abstract class Match {
   protected observers: IMatchObserver[] = [];
   protected statsManager: StatsManager;
   protected state: MatchState = MatchState.NOT_STARTED;
+  protected currentInnings: Innings | null = null;
+  protected innings: Innings[] = [];
 
   constructor(
     protected team1: Team,
@@ -312,6 +441,14 @@ abstract class Match {
       throw new Error("Match is not in progress");
     }
 
+    if (!this.currentInnings) {
+      throw new Error("No innings in progress");
+    }
+
+    if (!this.currentInnings.addBall(ball)) {
+      throw new Error("Cannot add ball to current innings");
+    }
+
     this.balls.push(ball);
     this.currentScore = this.currentScore.updateScore(ball);
     this.notifyObservers(ball);
@@ -323,39 +460,102 @@ abstract class Match {
   }
 
   public startMatch(): void {
+    if (this.state !== MatchState.NOT_STARTED) {
+      throw new Error("Match can only be started from NOT_STARTED state");
+    }
     this.state = MatchState.IN_PROGRESS;
+    this.startNewInnings(this.team1, this.team2);
   }
 
   public endMatch(): void {
     this.state = MatchState.COMPLETED;
   }
 
+  protected startNewInnings(battingTeam: Team, bowlingTeam: Team): void {
+    const targetScore =
+      this.innings.length > 0
+        ? this.innings[0].getScore().getRuns() + 1
+        : undefined;
+
+    this.currentInnings = new Innings(
+      battingTeam,
+      bowlingTeam,
+      this.totalOvers,
+      targetScore
+    );
+    this.innings.push(this.currentInnings);
+  }
+
+  public getCurrentScore(): Score {
+    return this.currentScore;
+  }
+
+  public getState(): MatchState {
+    return this.state;
+  }
+
+  public getCurrentInnings(): Innings | null {
+    return this.currentInnings;
+  }
+
+  public getTeam1(): Team {
+    return this.team1;
+  }
+
+  public getTeam2(): Team {
+    return this.team2;
+  }
+
+  public getUmpires(): Umpire[] {
+    return [...this.umpires];
+  }
+
+  public getStadium(): Stadium {
+    return this.stadium;
+  }
+
   abstract validateMatchRules(): boolean;
+}
 
-  public initializeMatch(): void {
-    // Add commentators as observers
-    this.addCommentators();
-    // Add stats manager as observer
-    this.addStatsObserver();
-    this.startMatch();
+// Match type implementations remain the same
+class T20Match extends Match {
+  constructor(team1: Team, team2: Team, umpires: Umpire[], stadium: Stadium) {
+    super(team1, team2, umpires, stadium, 20); // T20 has 20 overs
   }
 
-  private addCommentators(): void {
-    // Get commentators assigned to this match
-    const matchCommentators = this.getAssignedCommentators();
-    matchCommentators.forEach((commentator) => {
-      this.addObserver(commentator);
-    });
+  public validateMatchRules(): boolean {
+    return this.totalOvers === 20;
+  }
+}
+
+class ODIMatch extends Match {
+  constructor(team1: Team, team2: Team, umpires: Umpire[], stadium: Stadium) {
+    super(team1, team2, umpires, stadium, 50); // ODI has 50 overs
   }
 
-  private addStatsObserver(): void {
-    this.addObserver(this.statsManager);
+  public validateMatchRules(): boolean {
+    return this.totalOvers === 50;
+  }
+}
+
+class TestMatch extends Match {
+  private maxDays: number = 5;
+  private currentDay: number = 1;
+
+  constructor(team1: Team, team2: Team, umpires: Umpire[], stadium: Stadium) {
+    super(team1, team2, umpires, stadium, null); // Test matches don't have over limits
   }
 
-  protected getAssignedCommentators(): Commentator[] {
-    // This would typically be set during match creation
-    // For now, returning empty array
-    return [];
+  public validateMatchRules(): boolean {
+    return this.currentDay <= this.maxDays;
+  }
+
+  public nextDay(): void {
+    if (this.currentDay < this.maxDays) {
+      this.currentDay++;
+    } else {
+      this.endMatch();
+    }
   }
 }
 
@@ -912,44 +1112,205 @@ class Score {
   }
 }
 
-// Add specific match type implementations
-class T20Match extends Match {
-  constructor(team1: Team, team2: Team, umpires: Umpire[], stadium: Stadium) {
-    super(team1, team2, umpires, stadium, 20); // T20 has 20 overs
-  }
-
-  public validateMatchRules(): boolean {
-    return this.totalOvers === 20;
-  }
+// Add Innings related interfaces
+interface IInnings {
+  addBall(ball: Ball): boolean;
+  getScore(): Score;
+  getCurrentBatsmen(): Player[];
+  getCurrentBowler(): Player;
+  isComplete(): boolean;
 }
 
-class ODIMatch extends Match {
-  constructor(team1: Team, team2: Team, umpires: Umpire[], stadium: Stadium) {
-    super(team1, team2, umpires, stadium, 50); // ODI has 50 overs
-  }
-
-  public validateMatchRules(): boolean {
-    return this.totalOvers === 50;
-  }
+interface IInningsState {
+  canAddBall(): boolean;
+  handleBall(innings: Innings, ball: Ball): boolean;
 }
 
-class TestMatch extends Match {
-  private maxDays: number = 5;
-  private currentDay: number = 1;
+// Add Innings class
+class Innings implements IInnings {
+  private overs: Over[] = [];
+  private currentOver: Over;
+  private score: Score;
+  private wickets: number = 0;
+  private battingOrder: Player[] = [];
+  private currentBatsmen: Player[] = [];
+  private currentBowler: Player | null = null;
+  private state: IInningsState;
 
-  constructor(team1: Team, team2: Team, umpires: Umpire[], stadium: Stadium) {
-    super(team1, team2, umpires, stadium, null); // Test matches don't have over limits
+  constructor(
+    private battingTeam: Team,
+    private bowlingTeam: Team,
+    private maxOvers: number | null,
+    private targetScore?: number
+  ) {
+    this.currentOver = new Over(0);
+    this.score = new Score(0, 0, 0, 0);
+    this.state = new InningsInProgressState();
   }
 
-  public validateMatchRules(): boolean {
-    return this.currentDay <= this.maxDays;
-  }
-
-  public nextDay(): void {
-    if (this.currentDay < this.maxDays) {
-      this.currentDay++;
-    } else {
-      this.endMatch();
+  public addBall(ball: Ball): boolean {
+    if (!this.state.canAddBall()) {
+      return false;
     }
+
+    if (this.currentOver.isComplete()) {
+      this.overs.push(this.currentOver);
+      this.currentOver = new Over(this.overs.length);
+      this.rotateBowler();
+    }
+
+    const result = this.currentOver.addBall(ball);
+    if (result) {
+      this.updateScore(ball);
+      this.updateBattingOrder(ball);
+    }
+
+    this.checkInningsState();
+    return result;
+  }
+
+  private updateScore(ball: Ball): void {
+    this.score = this.score.updateScore(ball);
+    if (ball.getIsWicket()) {
+      this.wickets++;
+    }
+  }
+
+  private updateBattingOrder(ball: Ball): void {
+    const batsman = ball.getBatsman();
+    if (!this.battingOrder.includes(batsman)) {
+      this.battingOrder.push(batsman);
+    }
+
+    if (ball.getIsWicket()) {
+      this.rotateBatsmen();
+    } else if (ball.getBallResultRuns() % 2 === 1) {
+      this.rotateStrike();
+    }
+  }
+
+  private rotateBatsmen(): void {
+    if (this.wickets < 10) {
+      // Get next batsman from team who hasn't batted yet
+      const availableBatsmen = this.battingTeam
+        .getPlayers()
+        .filter((player) => !this.battingOrder.includes(player));
+      if (availableBatsmen.length > 0) {
+        this.currentBatsmen[this.currentBatsmen.indexOf(this.getOutBatsman())] =
+          availableBatsmen[0];
+      }
+    }
+  }
+
+  private rotateStrike(): void {
+    this.currentBatsmen.reverse();
+  }
+
+  private rotateBowler(): void {
+    // Get a different bowler from the bowling team
+    const availableBowlers = this.bowlingTeam
+      .getPlayers()
+      .filter(
+        (player) =>
+          player !== this.currentBowler && player.getBowlingStyle() !== null
+      );
+    if (availableBowlers.length > 0) {
+      this.currentBowler = availableBowlers[0];
+    }
+  }
+
+  private checkInningsState(): void {
+    if (this.wickets >= 10) {
+      this.state = new InningsCompletedState();
+    } else if (this.maxOvers && this.getOvers() >= this.maxOvers) {
+      this.state = new InningsCompletedState();
+    } else if (this.targetScore && this.score.getRuns() > this.targetScore) {
+      this.state = new InningsCompletedState();
+    }
+  }
+
+  public getScore(): Score {
+    return this.score;
+  }
+
+  public getCurrentBatsmen(): Player[] {
+    return [...this.currentBatsmen];
+  }
+
+  public getCurrentBowler(): Player {
+    if (!this.currentBowler) {
+      throw new Error("No bowler assigned");
+    }
+    return this.currentBowler;
+  }
+
+  public isComplete(): boolean {
+    return this.state instanceof InningsCompletedState;
+  }
+
+  private getOvers(): number {
+    return this.overs.length + (this.currentOver.isComplete() ? 1 : 0);
+  }
+
+  private getOutBatsman(): Player {
+    // Return the batsman who got out (implementation depends on your needs)
+    return this.currentBatsmen[0];
+  }
+}
+
+// Add Over class
+class Over {
+  private balls: Ball[] = [];
+  private readonly MAX_BALLS: number = 6;
+
+  constructor(private overNumber: number) {}
+
+  public addBall(ball: Ball): boolean {
+    if (this.isComplete()) {
+      return false;
+    }
+    this.balls.push(ball);
+    return true;
+  }
+
+  public isComplete(): boolean {
+    return this.balls.length === this.MAX_BALLS;
+  }
+
+  public getBalls(): Ball[] {
+    return [...this.balls];
+  }
+
+  public getOverNumber(): number {
+    return this.overNumber;
+  }
+
+  public getRunsInOver(): number {
+    return this.balls.reduce((sum, ball) => sum + ball.getBallResultRuns(), 0);
+  }
+
+  public getWicketsInOver(): number {
+    return this.balls.filter((ball) => ball.getIsWicket()).length;
+  }
+}
+
+// Add Innings State classes
+class InningsInProgressState implements IInningsState {
+  public canAddBall(): boolean {
+    return true;
+  }
+
+  public handleBall(innings: Innings, ball: Ball): boolean {
+    return innings.addBall(ball);
+  }
+}
+
+class InningsCompletedState implements IInningsState {
+  public canAddBall(): boolean {
+    return false;
+  }
+
+  public handleBall(innings: Innings, ball: Ball): boolean {
+    return false;
   }
 }
