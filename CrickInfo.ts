@@ -3,7 +3,7 @@ interface IMatchObserver {
   update(ball: Ball): void;
 }
 
-interface IStatsManager {
+interface IStatsManager extends IMatchObserver {
   updateStats(ball: Ball): void;
   getHighestWicketTaker(): Player;
   getHighestCenturyScorer(matchType: MatchType): Player;
@@ -223,8 +223,12 @@ class Team {
   }
 }
 
-class StatsManager implements IStatsManager, IMatchObserver {
+class StatsManager implements IStatsManager {
   private playerStats: Map<Player, PlayerStats> = new Map();
+
+  public update(ball: Ball): void {
+    this.updateStats(ball);
+  }
 
   public updateStats(ball: Ball): void {
     const batsman = ball.getBatsman();
@@ -279,10 +283,6 @@ class StatsManager implements IStatsManager, IMatchObserver {
 
   public getPlayerStats(player: Player): PlayerStats {
     return this.getOrCreatePlayerStats(player);
-  }
-
-  public update(ball: Ball): void {
-    this.updateStats(ball);
   }
 }
 
@@ -410,19 +410,136 @@ class MatchFactory {
   }
 }
 
-// Main CrickInfo class
-class CrickInfo {
-  private tournaments: Tournament[] = [];
-  private globalStatsManager: StatsManager;
+// Add service interfaces
+interface IMatchService {
+  createMatch(
+    matchType: MatchType,
+    team1: Team,
+    team2: Team,
+    umpires: Umpire[],
+    stadium: Stadium
+  ): Match;
+  initializeMatch(match: Match, commentators: Commentator[]): void;
+  addBall(match: Match, ball: Ball): void;
+}
 
+interface ITournamentService {
+  createTournament(
+    name: string,
+    startDate: Date,
+    endDate: Date,
+    matchType: MatchType
+  ): Tournament;
+  addTeamToTournament(
+    tournament: Tournament,
+    team: Team,
+    squad: Player[]
+  ): boolean;
+}
+
+interface IStatsService {
+  updateStats(ball: Ball): void;
+  getGlobalStats(): StatsManager;
+  getTournamentStats(tournament: Tournament): StatsManager;
+}
+
+// Add service implementations
+class MatchService implements IMatchService {
+  constructor(private statsManager: IStatsManager) {}
+
+  public createMatch(
+    matchType: MatchType,
+    team1: Team,
+    team2: Team,
+    umpires: Umpire[],
+    stadium: Stadium
+  ): Match {
+    return MatchFactory.createMatch(matchType, team1, team2, umpires, stadium);
+  }
+
+  public initializeMatch(match: Match, commentators: Commentator[]): void {
+    // Add commentators as observers
+    commentators.forEach((commentator) => match.addObserver(commentator));
+
+    // Add stats manager as observer
+    match.addObserver(this.statsManager);
+
+    match.startMatch();
+  }
+
+  public addBall(match: Match, ball: Ball): void {
+    match.addBall(ball);
+  }
+}
+
+class TournamentService implements ITournamentService {
+  constructor(private statsManager: IStatsManager) {}
+
+  public createTournament(
+    name: string,
+    startDate: Date,
+    endDate: Date,
+    matchType: MatchType
+  ): Tournament {
+    return new Tournament(name, startDate, endDate, matchType);
+  }
+
+  public addTeamToTournament(
+    tournament: Tournament,
+    team: Team,
+    squad: Player[]
+  ): boolean {
+    return tournament.addTeamSquad(team, squad);
+  }
+}
+
+class StatsService implements IStatsService {
   constructor(
-    private teams: Team[],
-    private matches: Match[],
-    private commentators: Commentator[],
-    private stadiums: Stadium[],
-    private umpires: Umpire[]
-  ) {
-    this.globalStatsManager = new StatsManager();
+    private globalStatsManager: StatsManager,
+    private tournamentStats: Map<Tournament, StatsManager>
+  ) {}
+
+  public updateStats(ball: Ball): void {
+    this.globalStatsManager.updateStats(ball);
+  }
+
+  public getGlobalStats(): StatsManager {
+    return this.globalStatsManager;
+  }
+
+  public getTournamentStats(tournament: Tournament): StatsManager {
+    if (!this.tournamentStats.has(tournament)) {
+      this.tournamentStats.set(tournament, new StatsManager());
+    }
+    return this.tournamentStats.get(tournament)!;
+  }
+}
+
+// Update Admin class to use services
+class Admin {
+  constructor(
+    private matchService: IMatchService,
+    private tournamentService: ITournamentService,
+    private statsService: IStatsService
+  ) {}
+
+  public createAndInitializeMatch(
+    matchType: MatchType,
+    team1: Team,
+    team2: Team,
+    umpires: Umpire[],
+    stadium: Stadium,
+    commentators: Commentator[]
+  ): Match {
+    const match = this.matchService.createMatch(
+      matchType,
+      team1,
+      team2,
+      umpires,
+      stadium
+    );
+    this.matchService.initializeMatch(match, commentators);
+    return match;
   }
 
   public createTournament(
@@ -431,13 +548,331 @@ class CrickInfo {
     endDate: Date,
     matchType: MatchType
   ): Tournament {
-    const tournament = new Tournament(name, startDate, endDate, matchType);
-    this.tournaments.push(tournament);
-    return tournament;
+    return this.tournamentService.createTournament(
+      name,
+      startDate,
+      endDate,
+      matchType
+    );
   }
 
-  public getGlobalStats(): StatsManager {
-    return this.globalStatsManager;
+  public addBallToMatch(match: Match, ball: Ball): void {
+    this.matchService.addBall(match, ball);
+  }
+}
+
+// Update CrickInfo class to use dependency injection
+class CrickInfo {
+  private matchService: IMatchService;
+  private tournamentService: ITournamentService;
+  private statsService: IStatsService;
+
+  constructor(
+    private teams: Team[],
+    private matches: Match[],
+    private commentators: Commentator[],
+    private stadiums: Stadium[],
+    private umpires: Umpire[]
+  ) {
+    const globalStatsManager = new StatsManager();
+    const tournamentStats = new Map<Tournament, StatsManager>();
+
+    this.statsService = new StatsService(globalStatsManager, tournamentStats);
+    this.matchService = new MatchService(globalStatsManager);
+    this.tournamentService = new TournamentService(globalStatsManager);
+  }
+
+  public getAdmin(): Admin {
+    return new Admin(
+      this.matchService,
+      this.tournamentService,
+      this.statsService
+    );
+  }
+}
+
+// Example usage with reduced coupling
+class CrickInfoExample {
+  public static demonstrateMatchCreation(): void {
+    // Create required objects
+    const captain1 = new Player(
+      "Virat Kohli",
+      32,
+      [Role.CAPTAIN],
+      "Right Hand",
+      null,
+      "India",
+      PlayerType.BATSMAN
+    );
+    const viceCaptain1 = new Player(
+      "Rohit Sharma",
+      34,
+      [Role.VICE_CAPTAIN],
+      "Right Hand",
+      null,
+      "India",
+      PlayerType.BATSMAN
+    );
+    const captain2 = new Player(
+      "Pat Cummins",
+      28,
+      [Role.CAPTAIN],
+      "Right Hand",
+      "Right Arm Fast",
+      "Australia",
+      PlayerType.BOWLER
+    );
+    const viceCaptain2 = new Player(
+      "Steve Smith",
+      32,
+      [Role.VICE_CAPTAIN],
+      "Right Hand",
+      null,
+      "Australia",
+      PlayerType.BATSMAN
+    );
+
+    const team1 = new Team("India", [], captain1, viceCaptain1);
+    const team2 = new Team("Australia", [], captain2, viceCaptain2);
+    const umpires = [
+      new Umpire("John Doe", "England", 100, 1, "john@icc.com", "+44123456789"),
+    ];
+    const stadium = new Stadium("MCG", "Melbourne", 100000, {
+      length: 171,
+      width: 146,
+    });
+    const commentators = [
+      new Commentator(
+        "Tony Greig",
+        "England",
+        20,
+        ["English"],
+        "tony@cricket.com",
+        "+44987654321"
+      ),
+      new Commentator(
+        "Harsha Bhogle",
+        "India",
+        30,
+        ["English", "Hindi"],
+        "harsha@cricket.com",
+        "+911234567890"
+      ),
+    ];
+
+    // Create CrickInfo instance with dependencies
+    const cricInfo = new CrickInfo([], [], [], [], []);
+    const admin = cricInfo.getAdmin();
+
+    // Create and initialize match using services
+    const match = admin.createAndInitializeMatch(
+      MatchType.ODI,
+      team1,
+      team2,
+      umpires,
+      stadium,
+      commentators
+    );
+
+    // Create ball with proper Player objects
+    const bowler = new Player(
+      "Mitchell Starc",
+      31,
+      [],
+      null,
+      "Left Arm Fast",
+      "Australia",
+      PlayerType.BOWLER
+    );
+    const batsman = new Player(
+      "KL Rahul",
+      29,
+      [],
+      "Right Hand",
+      null,
+      "India",
+      PlayerType.BATSMAN
+    );
+
+    const ball = new Ball(
+      1, // over number
+      BallType.NORMAL,
+      4, // runs scored
+      1, // ball number
+      bowler,
+      batsman,
+      false // not a wicket
+    );
+
+    // Add ball using service
+    admin.addBallToMatch(match, ball);
+  }
+}
+
+// Rename Person to CricketPerson
+abstract class CricketPerson {
+  constructor(
+    protected name: string,
+    protected country: string,
+    protected email: string = "",
+    protected phone: string = ""
+  ) {}
+
+  public getName(): string {
+    return this.name;
+  }
+
+  public getCountry(): string {
+    return this.country;
+  }
+
+  public getEmail(): string {
+    return this.email;
+  }
+
+  public getPhone(): string {
+    return this.phone;
+  }
+
+  public setEmail(email: string): void {
+    this.email = email;
+  }
+
+  public setPhone(phone: string): void {
+    this.phone = phone;
+  }
+}
+
+// Update Commentator to extend CricketPerson
+class Commentator extends CricketPerson implements IMatchObserver {
+  private currentCommentary: string = "";
+
+  constructor(
+    name: string,
+    country: string,
+    private experienceYears: number,
+    private languages: string[] = ["English"],
+    email: string = "",
+    phone: string = ""
+  ) {
+    super(name, country, email, phone);
+  }
+
+  public update(ball: Ball): void {
+    this.generateCommentary(ball);
+  }
+
+  private generateCommentary(ball: Ball): void {
+    let commentary = `${ball.getBowler().getName()} bowls to ${ball
+      .getBatsman()
+      .getName()}. `;
+
+    if (ball.getIsWicket()) {
+      commentary += `WICKET! ${ball
+        .getBatsman()
+        .getName()} is out ${ball.getWicketType()}!`;
+    } else if (ball.getBallResultRuns() > 0) {
+      commentary += `${ball.getBallResultRuns()} runs scored.`;
+    } else {
+      commentary += "No run.";
+    }
+
+    this.currentCommentary = commentary;
+  }
+
+  public getCurrentCommentary(): string {
+    return this.currentCommentary;
+  }
+
+  public getExperienceYears(): number {
+    return this.experienceYears;
+  }
+
+  public getLanguages(): string[] {
+    return [...this.languages];
+  }
+
+  public addLanguage(language: string): void {
+    if (!this.languages.includes(language)) {
+      this.languages.push(language);
+    }
+  }
+}
+
+// Update Umpire to extend CricketPerson
+class Umpire extends CricketPerson {
+  constructor(
+    name: string,
+    country: string,
+    private matchesOfficiated: number,
+    private iccRanking: number,
+    email: string = "",
+    phone: string = ""
+  ) {
+    super(name, country, email, phone);
+  }
+
+  public getMatchesOfficiated(): number {
+    return this.matchesOfficiated;
+  }
+
+  public getIccRanking(): number {
+    return this.iccRanking;
+  }
+
+  public incrementMatchesOfficiated(): void {
+    this.matchesOfficiated++;
+  }
+
+  public updateIccRanking(newRanking: number): void {
+    this.iccRanking = newRanking;
+  }
+}
+
+// Add Stadium class
+class Stadium {
+  private matches: Match[] = [];
+
+  constructor(
+    private name: string,
+    private location: string,
+    private capacity: number,
+    private dimensions: { length: number; width: number },
+    private facilities: string[] = []
+  ) {}
+
+  public getName(): string {
+    return this.name;
+  }
+
+  public getLocation(): string {
+    return this.location;
+  }
+
+  public getCapacity(): number {
+    return this.capacity;
+  }
+
+  public getDimensions(): { length: number; width: number } {
+    return { ...this.dimensions };
+  }
+
+  public getFacilities(): string[] {
+    return [...this.facilities];
+  }
+
+  public addFacility(facility: string): void {
+    if (!this.facilities.includes(facility)) {
+      this.facilities.push(facility);
+    }
+  }
+
+  public addMatch(match: Match): void {
+    this.matches.push(match);
+  }
+
+  public getMatchHistory(): Match[] {
+    return [...this.matches];
   }
 }
 
@@ -477,86 +912,6 @@ class Score {
   }
 }
 
-// Add Stadium class
-class Stadium {
-  constructor(
-    private name: string,
-    private location: string,
-    private capacity: number,
-    private dimensions: { length: number; width: number }
-  ) {}
-
-  public getName(): string {
-    return this.name;
-  }
-
-  public getLocation(): string {
-    return this.location;
-  }
-
-  public getCapacity(): number {
-    return this.capacity;
-  }
-}
-
-// Add Umpire class
-class Umpire {
-  constructor(
-    private name: string,
-    private country: string,
-    private matchesOfficiated: number,
-    private iccRanking: number
-  ) {}
-
-  public getName(): string {
-    return this.name;
-  }
-
-  public getMatchesOfficiated(): number {
-    return this.matchesOfficiated;
-  }
-
-  public incrementMatchesOfficiated(): void {
-    this.matchesOfficiated++;
-  }
-}
-
-// Add Commentator class
-class Commentator implements IMatchObserver {
-  private currentCommentary: string = "";
-
-  constructor(
-    private name: string,
-    private language: string,
-    private experienceYears: number
-  ) {}
-
-  public update(ball: Ball): void {
-    // Generate commentary based on ball details
-    this.generateCommentary(ball);
-  }
-
-  private generateCommentary(ball: Ball): void {
-    let commentary = `${ball.getBowler().getName()} bowls to ${ball
-      .getBatsman()
-      .getName()}. `;
-
-    if (ball.getIsWicket()) {
-      commentary += `WICKET! ${ball
-        .getBatsman()
-        .getName()} is out ${ball.getWicketType()}!`;
-    } else {
-      commentary += `${ball.getBallResultRuns()} runs scored.`;
-    }
-
-    this.currentCommentary = commentary;
-  }
-
-  public getCurrentCommentary(): string {
-    return this.currentCommentary;
-  }
-}
-
 // Add specific match type implementations
 class T20Match extends Match {
   constructor(team1: Team, team2: Team, umpires: Umpire[], stadium: Stadium) {
@@ -564,7 +919,6 @@ class T20Match extends Match {
   }
 
   public validateMatchRules(): boolean {
-    // Implement T20 specific rules
     return this.totalOvers === 20;
   }
 }
@@ -575,7 +929,6 @@ class ODIMatch extends Match {
   }
 
   public validateMatchRules(): boolean {
-    // Implement ODI specific rules
     return this.totalOvers === 50;
   }
 }
@@ -589,7 +942,6 @@ class TestMatch extends Match {
   }
 
   public validateMatchRules(): boolean {
-    // Implement Test match specific rules
     return this.currentDay <= this.maxDays;
   }
 
@@ -599,176 +951,5 @@ class TestMatch extends Match {
     } else {
       this.endMatch();
     }
-  }
-}
-
-// Add Admin class to manage system
-class Admin {
-  constructor(private cricInfo: CrickInfo) {}
-
-  public createMatch(
-    matchType: MatchType,
-    team1: Team,
-    team2: Team,
-    umpires: Umpire[],
-    stadium: Stadium
-  ): Match {
-    return MatchFactory.createMatch(matchType, team1, team2, umpires, stadium);
-  }
-
-  public createTournament(
-    name: string,
-    startDate: Date,
-    endDate: Date,
-    matchType: MatchType
-  ): Tournament {
-    return this.cricInfo.createTournament(name, startDate, endDate, matchType);
-  }
-
-  public addBallToMatch(match: Match, ball: Ball): void {
-    match.addBall(ball);
-  }
-
-  public createAndInitializeMatch(
-    matchType: MatchType,
-    team1: Team,
-    team2: Team,
-    umpires: Umpire[],
-    stadium: Stadium,
-    commentators: Commentator[]
-  ): Match {
-    const match = MatchFactory.createMatch(
-      matchType,
-      team1,
-      team2,
-      umpires,
-      stadium
-    );
-
-    // Add commentators as observers
-    commentators.forEach((commentator) => {
-      match.addObserver(commentator);
-    });
-
-    // Initialize the match
-    match.initializeMatch();
-
-    return match;
-  }
-}
-
-// Add Over class to manage overs
-class Over {
-  private balls: Ball[] = [];
-
-  constructor(private overNumber: number) {}
-
-  public addBall(ball: Ball): boolean {
-    if (this.balls.length >= 6) return false;
-    this.balls.push(ball);
-    return true;
-  }
-
-  public isComplete(): boolean {
-    return this.balls.length === 6;
-  }
-
-  public getRunsInOver(): number {
-    return this.balls.reduce((sum, ball) => sum + ball.getBallResultRuns(), 0);
-  }
-
-  public getWicketsInOver(): number {
-    return this.balls.filter((ball) => ball.getIsWicket()).length;
-  }
-}
-
-// Add Innings class
-class Innings {
-  private overs: Over[] = [];
-  private currentOver: Over;
-  private score: Score;
-
-  constructor(
-    private battingTeam: Team,
-    private bowlingTeam: Team,
-    private maxOvers: number | null
-  ) {
-    this.currentOver = new Over(0);
-    this.score = new Score(0, 0, 0, 0);
-  }
-
-  public addBall(ball: Ball): boolean {
-    if (this.currentOver.isComplete()) {
-      this.overs.push(this.currentOver);
-      this.currentOver = new Over(this.overs.length);
-    }
-
-    if (this.maxOvers && this.overs.length >= this.maxOvers) {
-      return false;
-    }
-
-    return this.currentOver.addBall(ball);
-  }
-
-  public getScore(): Score {
-    return this.score;
-  }
-}
-
-// Example usage:
-class CrickInfoExample {
-  public static demonstrateMatchCreation(): void {
-    // Create required objects
-    const team1 = new Team(
-      "India",
-      [],
-      /* captain */ {} as Player,
-      /* viceCaptain */ {} as Player
-    );
-    const team2 = new Team(
-      "Australia",
-      [],
-      /* captain */ {} as Player,
-      /* viceCaptain */ {} as Player
-    );
-    const umpires = [new Umpire("John Doe", "England", 100, 1)];
-    const stadium = new Stadium("MCG", "Melbourne", 100000, {
-      length: 171,
-      width: 146,
-    });
-
-    // Create commentators
-    const commentators = [
-      new Commentator("Tony Greig", "English", 20),
-      new Commentator("Harsha Bhogle", "English", 30),
-    ];
-
-    // Create CrickInfo instance
-    const cricInfo = new CrickInfo([], [], [], [], []);
-    const admin = new Admin(cricInfo);
-
-    // Create and initialize match with observers
-    const match = admin.createAndInitializeMatch(
-      MatchType.ODI,
-      team1,
-      team2,
-      umpires,
-      stadium,
-      commentators
-    );
-
-    // Simulate a ball being bowled
-    const ball = new Ball(
-      1, // over number
-      BallType.NORMAL,
-      4, // runs scored
-      1, // ball number
-      {} as Player, // bowler
-      {} as Player, // batsman
-      false // not a wicket
-    );
-
-    // Add ball to match - this will notify all observers
-    admin.addBallToMatch(match, ball);
   }
 }
